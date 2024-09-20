@@ -1,0 +1,69 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: An AWS Serverless Application Model template for a PDF template list function.
+
+Resources:
+  PdfTemplateList:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: .
+      Handler: list_templates_function.lambda_handler
+      Runtime: python3.12
+      MemorySize: 128
+      Timeout: 3
+      Events:
+        Api1:
+          Type: Api
+          Properties:
+            Path: /pdfTemplateList
+            Method: GET
+            Auth:
+              ApiKeyRequired: true
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+                - s3:ListBucket
+              Resource:
+                - 'arn:aws:s3:::aws-sam-cli-managed-default-samclisourcebucket-kdvjqzoec6pg'
+                - 'arn:aws:s3:::aws-sam-cli-managed-default-samclisourcebucket-kdvjqzoec6pg/*'
+            - Effect: Allow
+              Action:
+                - logs:CreateLogGroup
+                - logs:CreateLogStream
+                - logs:PutLogEvents
+              Resource: "*"
+
+  PdfTemplateListUsagePlan:
+    Type: AWS::ApiGateway::UsagePlan
+    Properties:
+      ApiStages:
+        - ApiId: !Ref ServerlessRestApi  # The API Gateway ID created by SAM
+          Stage: Prod  # Reference the correct stage
+      UsagePlanName: PdfTemplateListUsagePlan
+      Description: Usage plan for the PDF function
+      Throttle:
+        RateLimit: 10
+        BurstLimit: 2
+
+  PdfTemplateListApiKey:
+    Type: AWS::ApiGateway::ApiKey
+    Properties:
+      Enabled: true
+      Name: PdfTemplateListApiKey
+      StageKeys:
+        - RestApiId: !Ref ServerlessRestApi  # The API Gateway ID created by SAM
+          StageName: Prod  # Reference the correct stage
+
+  PdfTemplateListUsagePlanKey:
+    Type: AWS::ApiGateway::UsagePlanKey
+    Properties:
+      KeyId: !Ref PdfTemplateListApiKey
+      KeyType: API_KEY
+      UsagePlanId: !Ref PdfTemplateListUsagePlan
+
+Outputs:
+  ApiUrl:
+    Description: "API Gateway endpoint URL"
+    Value: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/"
