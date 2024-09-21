@@ -1,27 +1,28 @@
-# PDF Form Field Discovery with AWS Lambda
+# PDF Template Listing with AWS Lambda
 
-This project contains an AWS Lambda function that dynamically extracts form field names from a PDF template stored in an S3 bucket. The extracted fields are returned in a structured JSON format, making it easy to understand what fields are available for further operations like populating or modifying the PDF.
+This AWS Lambda function lists all PDF templates stored in a specific folder within an S3 bucket. The function returns a JSON response containing the names of all available PDF templates, making it easy for users to see which templates are available for further operations.
 
 ## Features
 
-- **Discover PDF Form Fields**: Automatically scans and extracts all the form fields (e.g., text fields, checkboxes) from a PDF.
-- **S3 Integration**: Retrieves the PDF template from an S3 bucket.
-- **JSON Response**: Returns the form field names in a JSON format, ready for further processing or validation.
-  
+- **List PDF Templates**: Automatically retrieves a list of all `.pdf` files in the designated folder of an S3 bucket.
+- **S3 Integration**: The function interacts with an S3 bucket to fetch the template names.
+- **Logging**: Logs important events and errors using the `logging` module for easy debugging.
+- **JSON Response**: Returns the list of PDF templates in a structured JSON format.
+
 ## How it Works
 
-1. The Lambda function receives an API request containing the name of a PDF template stored in an S3 bucket.
-2. The function downloads the PDF template from the S3 bucket to the Lambda environment.
-3. It reads through the PDF and extracts any form fields (e.g., text fields, checkboxes) available.
-4. The function returns a JSON response containing the names of the discovered fields.
+1. The Lambda function receives an API request.
+2. It connects to the specified S3 bucket and lists all objects (files) in the `pdf_templates/` folder.
+3. It filters the files to include only `.pdf` files.
+4. The function returns the list of PDF filenames as a JSON response.
 
 ## Technologies Used
 
-- **AWS Lambda**: The serverless function that extracts form fields from a PDF.
-- **AWS S3**: Stores the PDF templates used for field discovery.
-- **PyPDF**: Python library used to read and extract form data from PDF files.
+- **AWS Lambda**: Serverless function that lists available PDF templates.
+- **AWS S3**: Stores the PDF templates, and the function queries S3 to retrieve the list of files.
 - **Boto3**: AWS SDK for Python, used to interact with S3.
 - **Python 3.12**: The runtime environment for the Lambda function.
+- **Logging**: Python's `logging` module is used for debugging and error tracking.
 
 ---
 
@@ -51,22 +52,19 @@ Before deploying or testing the Lambda function, ensure you have the following:
 
 ### Request Format
 
-The API expects a GET request with the following structure:
-
-- **Query Parameters**:
-  - `templateName`: The name of the PDF template stored in the S3 bucket.
+The API expects a simple GET request to retrieve the list of available PDF templates.
 
 #### Example Request
 
 ```http
-GET /pdf-form-discovery?templateName=sample_template.pdf HTTP/1.1
+GET /pdf-template-list HTTP/1.1
 Host: your-api-gateway-url
 ```
 
 ### Response
 
 - **Status Code**: `200 OK`
-- **Response Body**: A JSON object containing the names of the form fields found in the PDF template.
+- **Response Body**: A JSON object containing the list of PDF templates available in the S3 bucket.
 - **Headers**:
   - `Content-Type`: `application/json`
 
@@ -74,35 +72,31 @@ Host: your-api-gateway-url
 
 ```json
 {
-    "formData": {
-        "fname_input": "",
-        "lname_input": "",
-        "email_input": "",
-        "checkbox_human": ""
-    }
+    "templates": [
+        "sample_template.pdf",
+        "contract_template.pdf",
+        "invoice_template.pdf"
+    ]
 }
 ```
 
 ### Error Responses
 
-- **Status Code**: `400 Bad Request`
-  - Occurs when the `templateName` query parameter is missing.
-  
 - **Status Code**: `500 Internal Server Error`
-  - Occurs when something goes wrong during the PDF processing or S3 download.
+  - Occurs when something goes wrong during the S3 interaction or PDF listing process.
 
 #### Example Error Response
 
 ```json
 {
     "message": "Internal server error",
-    "error": "An error occurred (403) when calling the HeadObject operation: Forbidden"
+    "error": "An error occurred (403) when calling the ListObjectsV2 operation: Forbidden"
 }
 ```
 
 ## S3 Bucket Structure
 
-Your S3 bucket should contain the PDF templates that will be used for field discovery.
+Your S3 bucket should contain PDF templates stored in a specific folder. The function will list only `.pdf` files from this folder.
 
 ### Example Structure:
 
@@ -110,7 +104,8 @@ Your S3 bucket should contain the PDF templates that will be used for field disc
 S3 Bucket: aws-sam-cli-managed-default-samclisourcebucket-kdvjqzoec6pg
 └── pdf_templates/
     ├── sample_template.pdf
-    └── another_template.pdf
+    ├── contract_template.pdf
+    └── invoice_template.pdf
 ```
 
 ## Lambda Code
@@ -119,68 +114,58 @@ Here’s the core code for the Lambda function:
 
 ```python
 import json
+import os
 import boto3
-from pypdf import PdfReader
+import logging
+
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger()
 
 s3 = boto3.client('s3')
 
-def discover_pdf_fields(pdf_path):
-    """Discover form fields in a given PDF."""
-    pdf_reader = PdfReader(pdf_path)
-    fields = {}
-
-    for page in pdf_reader.pages:
-        if '/Annots' in page:
-            for annotation in page['/Annots']:
-                field = annotation.get_object()
-                field_name = field.get('/T')
-                if field_name:
-                    field_name = field_name.strip('()')
-                    fields[field_name] = ""
-
-    return fields
-
 def lambda_handler(event, context):
     try:
-        # Get template name from query parameters
-        template_name = event.get('queryStringParameters', {}).get('templateName')
-        if not template_name:
-            return {
-                'statusCode': 400,
-                'body': json.dumps({'message': 'templateName parameter is required'}),
-                'headers': {'Content-Type': 'application/json'}
-            }
-
-        # Define S3 bucket and template path
+        # Define S3 bucket
         bucket_name = 'aws-sam-cli-managed-default-samclisourcebucket-kdvjqzoec6pg'
-        pdf_template_s3_key = f'pdf_templates/{template_name}'
+        prefix = 'pdf_templates/'
 
-        # Paths in Lambda's tmp directory
-        pdf_template_path = f'/tmp/{template_name}'
+        # Log the incoming event for debugging
+        logger.info("Received event: %s", json.dumps(event))
 
-        # Download the template PDF from S3
-        s3.download_file(bucket_name, pdf_template_s3_key, pdf_template_path)
+        # List objects in the specified S3 bucket and folder
+        response = s3.list_objects_v2(Bucket=bucket_name, Prefix=prefix)
+        templates = [obj['Key'].split('/')[-1] for obj in response.get('Contents', []) if obj['Key'].endswith('.pdf')]
 
-        # Discover form fields from the template
-        discovered_fields = discover_pdf_fields(pdf_template_path)
-
-        # Return the form fields
+        # Return the list of templates
         return {
             'statusCode': 200,
-            'body': json.dumps({'formData': discovered_fields}),
-            'headers': {'Content-Type': 'application/json'}
+            'body': json.dumps({'templates': templates}),
+            'headers': {
+                'Content-Type': 'application/json'
+            }
         }
 
     except Exception as e:
+        # Log the exception details
+        logger.error("Error occurred: %s", str(e), exc_info=True)
         return {
             'statusCode': 500,
             'body': json.dumps({
                 'message': 'Internal server error',
                 'error': str(e)
             }),
-            'headers': {'Content-Type': 'application/json'}
+            'headers': {
+                'Content-Type': 'application/json'
+            }
         }
 ```
+
+### Key Functionality:
+
+1. **Logging**: The function logs incoming events and any exceptions that occur, making debugging easier via AWS CloudWatch.
+2. **S3 PDF Listing**: The function lists all `.pdf` files in the `pdf_templates/` folder of the specified S3 bucket and returns them as a list.
+3. **Error Handling**: If any error occurs during the S3 interaction, the function logs the error and returns an appropriate response.
 
 ## Deploying the Lambda Function
 
@@ -211,17 +196,17 @@ You can deploy this Lambda function using AWS SAM. Here's a general overview of 
 You can test the API using tools like **Postman** or **cURL**. Example:
 
 ```bash
-curl -X GET "https://your-api-url/pdf-form-discovery?templateName=sample_template.pdf"
+curl -X GET https://your-api-url/pdf-template-list
 ```
 
 ### Expected Response:
 ```json
 {
-    "formData": {
-        "fname_input": "",
-        "lname_input": "",
-        "checkbox_human": ""
-    }
+    "templates": [
+        "sample_template.pdf",
+        "contract_template.pdf",
+        "invoice_template.pdf"
+    ]
 }
 ```
 
@@ -229,27 +214,19 @@ curl -X GET "https://your-api-url/pdf-form-discovery?templateName=sample_templat
 
 The function returns the following error codes:
 
-- **400 Bad Request**: When the `templateName` query parameter is missing.
-- **500 Internal Server Error**: When something goes wrong during PDF processing or S3 download.
+- **500 Internal Server Error**: When something goes wrong during S3 interaction or template listing.
 
-### Example Error Cases:
-- **Missing templateName Parameter**:
-  ```json
-  {
-      "message": "templateName parameter is required"
-  }
-  ```
-
+### Example Error Case:
 - **S3 Access Error (403 Forbidden)**:
   ```json
   {
       "message": "Internal server error",
-      "error": "An error occurred (403) when calling the HeadObject operation: Forbidden"
+      "error": "An error occurred (403) when calling the ListObjectsV2 operation: Forbidden"
   }
   ```
 
 ## Future Improvements
 
-- **PDF Field Types**: Currently, only field names are extracted. Future versions could extract field types (e.g., text, checkbox) as well.
-- **Multi-page PDFs**: Improve the handling of multi-page PDFs to ensure form fields from all pages are accurately captured.
-- **Improved Error Handling**: Add more detailed error handling and logging for easier troubleshooting.
+- **Pagination**: If the S3 bucket contains a large number of files, consider adding pagination using `list_objects_v2`'s `ContinuationToken`.
+- **File Type Filtering**: Currently, only `.pdf` files are listed. You could extend this to support other file types if needed.
+- **Improved Error Handling**: Add more specific error codes (e.g., `404 Not Found` for an empty folder).
