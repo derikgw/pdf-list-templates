@@ -1,26 +1,23 @@
+# list_templates_function.py
 import json
-import os
-import boto3
 import logging
+from template_list_service import list_pdf_templates  # Import the function from the new module
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger()
 
-s3 = boto3.client('s3')
-
 def lambda_handler(event, context):
     try:
-        # Define S3 bucket
+        # Define S3 bucket and prefix
         bucket_name = 'aws-sam-cli-managed-default-samclisourcebucket-kdvjqzoec6pg'
         prefix = 'pdf_templates/'
 
         # Log the incoming event for debugging
         logger.info("Received event: %s", json.dumps(event))
 
-        # List objects in the specified S3 bucket and folder
-        response = s3.list_objects_v2(Bucket=bucket_name, Prefix=prefix)
-        templates = [obj['Key'].split('/')[-1] for obj in response.get('Contents', []) if obj['Key'].endswith('.pdf')]
+        # Call the module to list PDF templates
+        templates = list_pdf_templates(bucket_name, prefix)
 
         # Return the list of templates
         return {
